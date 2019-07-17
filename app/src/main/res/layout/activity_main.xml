@@ -10,6 +10,8 @@
 
     <com.colin.videocutview.VideoCutLayout
             android:id="@+id/main_cut"
+            android:layout_marginStart="10dp"
+            android:layout_marginEnd="10dp"
             android:layout_width="match_parent"
             android:layout_height="60dp"/>
 

@@ -11,12 +11,14 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         val adapter = TestAdapter(this)
         main_cut.setFrameAdapter(adapter)
+        main_cut.setVideoDuration(20000)
+        main_cut.setOnCutDurationListener { startMs, endMs ->
+
+        }
 
         main_btn.setOnClickListener {
 
-            val start = main_cut.getStartFramePosition()
-            val end = main_cut.getEndFramePosition()
-            main_txt.text = "start = $start  , end = $end"
+
         }
     }
 }
