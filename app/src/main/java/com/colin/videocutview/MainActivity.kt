@@ -2,6 +2,7 @@ package com.colin.videocutview
 
 import android.os.Bundle
 import android.support.v7.app.AppCompatActivity
+import android.support.v7.widget.LinearLayoutManager
 import kotlinx.android.synthetic.main.activity_main.*
 
 class MainActivity : AppCompatActivity() {
@@ -20,5 +21,8 @@ class MainActivity : AppCompatActivity() {
 
 
         }
+
+        main_test.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
+        main_test.adapter = TestAdapter(this)
     }
 }

@@ -1,10 +1,12 @@
 package com.colin.videocutview
 
 import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.support.v7.widget.LinearLayoutManager
 import android.support.v7.widget.RecyclerView
 import android.util.AttributeSet
-import android.util.Log
 import android.widget.FrameLayout
 
 /**
@@ -18,14 +20,17 @@ import android.widget.FrameLayout
  */
 class VideoCutLayout : FrameLayout {
 
-    private val mRecyclerView: RecyclerView = RecyclerView(context)
+    private val mRecyclerView: MyRecyclerView = MyRecyclerView(context)
     private val mCutView: VideoCutView
     private var mMaxDuration: Long = 15 * 1000 //视频的最大时长
     private var mVideoDuration = 0L //视频的真实时长
-    private var mPxDuration = 0L //每个像素代表的视频时长
-    private var mFramePxDuration = 0L //帧列表每个像素代表的视频时长
+    private var mPxDuration = 0f //每个像素代表的视频时长
+    private var mFramePxDuration = 0f //帧列表每个像素代表的视频时长
     private var mCutDuration = 0L //剪辑的时长
     private var mListener: OnCutDurationListener? = null
+    private var isComplete = false //是否准备完成
+    private val mPaint = Paint()
+
 
     constructor(context: Context) : super(context)
 
@@ -35,31 +40,26 @@ class VideoCutLayout : FrameLayout {
     init {
         val layoutManager = LinearLayoutManager(context, LinearLayoutManager.HORIZONTAL, false)
         mRecyclerView.layoutManager = layoutManager
+        mRecyclerView.isEnabled = false
         mCutView = VideoCutView(context)
-
+        mCutView.isEnabled = false
+        mCutView.minDuration = 3000f
+        mPaint.style = Paint.Style.FILL
+        mPaint.color = Color.parseColor("#80000000")
     }
 
     override fun onFinishInflate() {
         super.onFinishInflate()
         val params1 = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+        //这里改成padding
+//        mRecyclerView.setPadding(mCutView.getLeftWidth(), 0, mCutView.getRightWidth(), 0)
         params1.leftMargin = mCutView.getLeftWidth()
         params1.rightMargin = mCutView.getRightWidth()
+        mRecyclerView.setBackgroundColor(Color.TRANSPARENT)
         addView(mRecyclerView, params1)
 
         val params2 = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         addView(mCutView, params2)
-    }
-
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        super.onSizeChanged(w, h, oldw, oldh)
-        val width = w - mCutView.getLeftWidth() - mCutView.getRightWidth()
-        if (mVideoDuration <= mMaxDuration) {
-            mCutDuration = mVideoDuration
-            mPxDuration = mVideoDuration / width
-        } else {
-            mCutDuration = mMaxDuration
-            mPxDuration = mMaxDuration / width
-        }
     }
 
 
@@ -68,12 +68,6 @@ class VideoCutLayout : FrameLayout {
      */
     fun setFrameAdapter(adapter: RecyclerView.Adapter<*>) {
         mRecyclerView.adapter = adapter
-        mRecyclerView.post {
-            val range = mRecyclerView.computeHorizontalScrollRange()
-            //计算出每个像素代表的时长,并将剪辑时长赋值为最大值
-            mFramePxDuration = mVideoDuration / range
-        }
-
         mRecyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
                 if (newState == RecyclerView.SCROLL_STATE_IDLE) {
@@ -95,17 +89,83 @@ class VideoCutLayout : FrameLayout {
     private fun computeDuration(left: Float, right: Float) {
         val startPx = left - mCutView.getLeftWidth()
         val offset = mRecyclerView.computeHorizontalScrollOffset()
-        Log.e("test", "left = $left , right = $right , width = $width offset = $offset ")
-        val startMs = startPx * mPxDuration + offset * mFramePxDuration //起始时间
-        val endMs = startMs + (right - left) * mPxDuration
-        Log.e(
-            "test",
-            "startMs = $startMs  endMs = $endMs ,pxDuration = $mPxDuration  ,frameDuration = $mFramePxDuration"
-        )
-        mCutDuration = endMs.toLong() - startMs.toLong()
-        mListener?.invoke(startMs.toLong(), endMs.toLong())
+        var startMs = (startPx * mPxDuration + offset * mFramePxDuration).toLong() //起始时间
+        var endMs = (startMs + (right - left) * mPxDuration).toLong()
+        if (endMs > mVideoDuration) {
+            startMs -= (endMs - mVideoDuration)
+            endMs = mVideoDuration
+        }
+        startMs = Math.max(0, startMs)
+        mCutDuration = endMs - startMs
+        mListener?.invoke(startMs, endMs)
     }
 
+
+    /**
+     * 当加载完成的时候进行初始化计算
+     * 一定要调用这个方法
+     *
+     * @param func 需要添加一个透明的item
+     */
+    fun computeWithDataComplete(itemWidth: Int, func: Runnable) {
+        mRecyclerView.post {
+
+            var diff = 0f //裁剪区域和list的宽度差
+            var offset = 0 //右边露出的宽度
+            val cutRange = mCutView.getEnd() - mCutView.getStart() //拖动条的原始区间
+            var width = cutRange //拖动条的区间，用来最终计算
+            //给剪辑时长赋初始值
+            mCutDuration = if (mVideoDuration <= mMaxDuration) {
+                mVideoDuration
+            } else {
+                //如果视频时长大于了最大时长，那么需要将拖动控件往右边移动，让右边露出一些来。
+                //将recyclerView的marginRight 设置为0 ，添加一个透明的item，将cutView的右边margin设为item的宽度
+                val paramsList = mRecyclerView.layoutParams
+                if (paramsList is MarginLayoutParams) {
+                    paramsList.rightMargin = 0
+                }
+                func.run()
+                val params = mCutView.layoutParams
+                if (params is MarginLayoutParams) {
+                    //改变了cutView的margin后，修正了，所以之后的listener中right的坐标不需要减去offset
+                    offset = itemWidth - mCutView.getRightWidth()
+                    params.rightMargin += offset
+                }
+                mCutView.layoutParams = params
+                //如果要将后面露出来，加一个透明的item
+                width -= offset //宽度需要减去露出的部分
+                mMaxDuration
+            }
+            val range = mRecyclerView.computeHorizontalScrollRange() - offset
+            //因为帧的item宽度为int，所以会损失一些精度，导致两者有几个像素的误差。这里计算的时候把它减出来.
+            if (cutRange > range) {
+                val params = mCutView.layoutParams
+                if (params is MarginLayoutParams) {
+                    //改变了cutView的padding后，修正了，所以之后的listener中right的坐标不需要减去diff
+                    diff = cutRange - range
+                    params.rightMargin = diff.toInt()
+                    width -= diff
+                }
+                mCutView.layoutParams = params
+            }
+            //计算出每个像素代表的时长
+            mPxDuration = mCutDuration / width
+            mCutView.durationPx = mPxDuration
+            mFramePxDuration = mVideoDuration / range.toFloat()
+            computeDuration(mCutView.getStart(), mCutView.getEnd() - diff - offset)
+            isComplete = true
+            mCutView.isEnabled = true
+            mRecyclerView.isEnabled = true
+            requestLayout()
+        }
+    }
+
+
+    override fun onDrawForeground(canvas: Canvas?) {
+        super.onDrawForeground(canvas)
+        //绘制一个半透明的矩形挡住露出来的部分。
+        canvas?.drawRect(mCutView.right.toFloat(), 0f, measuredWidth.toFloat(), measuredHeight.toFloat(), mPaint)
+    }
 
     /**
      * 设置监听
@@ -118,8 +178,9 @@ class VideoCutLayout : FrameLayout {
     /**
      * 设置视频的时长
      */
-    fun setVideoDuration(duration: Long) {
+    fun setVideoDuration(duration: Long, maxDuration: Long = 15 * 1000) {
         mVideoDuration = duration
+        mMaxDuration = maxDuration
         mCutDuration = Math.min(mMaxDuration, mVideoDuration)
     }
 
@@ -143,5 +204,17 @@ class VideoCutLayout : FrameLayout {
         val child = mRecyclerView.findChildViewUnder(mCutView.getEnd(), 0f)
         child ?: return -1
         return mRecyclerView.getChildAdapterPosition(child)
+    }
+
+    /**
+     * 获取指针宽度
+     *
+     * @param orientation 0 -> 左边  1 -> 右边
+     */
+    fun getBitmapWidth(orientation: Int): Int {
+        return if (orientation == 0)
+            mCutView.getLeftWidth()
+        else
+            mCutView.getRightWidth()
     }
 }

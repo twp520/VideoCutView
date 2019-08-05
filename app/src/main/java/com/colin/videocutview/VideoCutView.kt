@@ -3,7 +3,7 @@ package com.colin.videocutview
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.*
-import android.graphics.Canvas.ALL_SAVE_FLAG
+import android.support.v4.content.ContextCompat
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
@@ -42,7 +42,9 @@ class VideoCutView : View {
 
     private var mLastX = 0f
     private var mDownX = 0f
-    private val mode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
+
+    var minDuration = 0f
+    var durationPx = 0f
 
     private var mListener: OnCutListener? = null
 
@@ -52,11 +54,12 @@ class VideoCutView : View {
         mPaint.strokeWidth = 5f
 
         //todo 处理自定义属性，线的颜色，边界的切图
-        mLeftBitmap = BitmapFactory.decodeResource(resources, R.drawable.icon_crop_left)
-        mRightBitmap = BitmapFactory.decodeResource(resources, R.drawable.icon_crop_right)
+        mLeftBitmap = vetor2bitmap(resources, R.drawable.ic_video_control)
+        mRightBitmap = vetor2bitmap(resources, R.drawable.ic_video_control_right)
         mRectF.left = mLeftPadding + mLeftBitmap.width
 
     }
+
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
@@ -69,30 +72,30 @@ class VideoCutView : View {
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         //绘制背景颜色
-        val saved = canvas.saveLayer(null, null, ALL_SAVE_FLAG)
+//        val saved = canvas.saveLayer(null, null, ALL_SAVE_FLAG)
 
+        mPaint.style = Paint.Style.FILL
         mPaint.color = Color.parseColor("#80000000")
         canvas.drawRect(getLeftWidth().toFloat(), 0f, mLeftPadding, height.toFloat(), mPaint)
-
-        canvas.drawRect(mRightPadding, 0f, width.toFloat() - getRightWidth().toFloat(), height.toFloat(), mPaint)
+        canvas.drawRect(mRightPadding, 0f, width.toFloat(), height.toFloat(), mPaint)
 
         //先画上下两根线
         mPaint.style = Paint.Style.STROKE
-        mPaint.color = Color.WHITE
-        canvas.drawLine(mLeftPadding, 0f, mRightPadding, 0f, mPaint)
-        canvas.drawLine(mLeftPadding, height.toFloat() - 5f, mRightPadding, height.toFloat() - 5f, mPaint)
+        mPaint.color = ContextCompat.getColor(context, R.color.colorAccent)
+        canvas.drawLine(mRectF.left, 0f, mRectF.right, 0f, mPaint)
+        canvas.drawLine(mRectF.left, height.toFloat(), mRectF.right, height.toFloat(), mPaint)
 
         //再画边界
         canvas.drawBitmap(mLeftBitmap, mLeftPadding, 0f, mPaint)
         canvas.drawBitmap(mRightBitmap, mRightPadding - mRightBitmap.width, 0f, mPaint)
 
         //画高亮
-        mPaint.xfermode = mode
-        mPaint.style = Paint.Style.FILL
-        canvas.drawRect(mRectF, mPaint)
-        mPaint.xfermode = null
+//        mPaint.xfermode = mode
+//        mPaint.style = Paint.Style.FILL
+//        canvas.drawRect(mRectF, mPaint)
+//        mPaint.xfermode = null
 
-        canvas.restoreToCount(saved)
+//        canvas.restoreToCount(saved)
 
     }
 
@@ -101,7 +104,8 @@ class VideoCutView : View {
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         var consumed = false
-
+        if (!isEnabled)
+            return consumed
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
                 //判断是否点击点在边界上，如果是则处理此次事件。
@@ -127,15 +131,21 @@ class VideoCutView : View {
                 consumed = when (click) {
                     leftClick -> {
                         val newPadding = Math.max(mLeftPadding + dx, 0f)
-                        if (newPadding + mLeftBitmap.width < mRectF.right - 5) {
-                            mLeftPadding = newPadding
+                        if (newPadding + mLeftBitmap.width < mRectF.right) {
+                            val curDuration = (mRectF.right - newPadding - mLeftBitmap.width) * durationPx
+                            if (!(curDuration <= minDuration + 1 && dx > 0)) {
+                                mLeftPadding = newPadding
+                            }
                         }
                         true
                     }
                     rightClick -> {
                         val newPadding = Math.min(mRightPadding + dx, width.toFloat())
-                        if (newPadding - mRightBitmap.width > mRectF.left + 5) {
-                            mRightPadding = newPadding
+                        if (newPadding - mRightBitmap.width > mRectF.left) {
+                            val curDuration = (newPadding - mRightBitmap.width - mRectF.left) * durationPx
+                            if (!(curDuration <= minDuration + 1 && dx < 0)) {
+                                mRightPadding = newPadding
+                            }
                         }
                         true
                     }
@@ -191,4 +201,5 @@ class VideoCutView : View {
     fun getEnd(): Float {
         return mRectF.right
     }
+
 }
