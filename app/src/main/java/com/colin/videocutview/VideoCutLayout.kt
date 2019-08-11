@@ -1,12 +1,12 @@
 package com.colin.videocutview
 
 import android.content.Context
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Paint
 import android.support.v7.widget.LinearLayoutManager
 import android.support.v7.widget.RecyclerView
 import android.util.AttributeSet
+import android.view.Gravity
+import android.view.View
 import android.widget.FrameLayout
 
 /**
@@ -21,6 +21,8 @@ import android.widget.FrameLayout
 class VideoCutLayout : FrameLayout {
 
     private val mRecyclerView: MyRecyclerView = MyRecyclerView(context)
+    private val mLayoutManager: LinearLayoutManager =
+        LinearLayoutManager(context, LinearLayoutManager.HORIZONTAL, false)
     private val mCutView: VideoCutView
     private var mMaxDuration: Long = 15 * 1000 //视频的最大时长
     private var mVideoDuration = 0L //视频的真实时长
@@ -29,7 +31,6 @@ class VideoCutLayout : FrameLayout {
     private var mCutDuration = 0L //剪辑的时长
     private var mListener: OnCutDurationListener? = null
     private var isComplete = false //是否准备完成
-    private val mPaint = Paint()
 
 
     constructor(context: Context) : super(context)
@@ -38,14 +39,12 @@ class VideoCutLayout : FrameLayout {
 
 
     init {
-        val layoutManager = LinearLayoutManager(context, LinearLayoutManager.HORIZONTAL, false)
-        mRecyclerView.layoutManager = layoutManager
+        mRecyclerView.layoutManager = mLayoutManager
         mRecyclerView.isEnabled = false
         mCutView = VideoCutView(context)
         mCutView.isEnabled = false
         mCutView.minDuration = 3000f
-        mPaint.style = Paint.Style.FILL
-        mPaint.color = Color.parseColor("#80000000")
+
     }
 
     override fun onFinishInflate() {
@@ -74,6 +73,15 @@ class VideoCutLayout : FrameLayout {
                     computeDuration(mCutView.getStart(), mCutView.getEnd())
                 }
             }
+
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                if (childCount > 2) {
+                    val lastPos = mLayoutManager.findLastVisibleItemPosition()
+                    getChildAt(1).visibility = if (lastPos >= adapter.itemCount - 1) View.GONE else View.VISIBLE
+                }
+            }
+
+
         })
 
         //在滑动的时候，计算当前剪辑的时长
@@ -120,11 +128,11 @@ class VideoCutLayout : FrameLayout {
             } else {
                 //如果视频时长大于了最大时长，那么需要将拖动控件往右边移动，让右边露出一些来。
                 //将recyclerView的marginRight 设置为0 ，添加一个透明的item，将cutView的右边margin设为item的宽度
+                func.run()
                 val paramsList = mRecyclerView.layoutParams
                 if (paramsList is MarginLayoutParams) {
                     paramsList.rightMargin = 0
                 }
-                func.run()
                 val params = mCutView.layoutParams
                 if (params is MarginLayoutParams) {
                     //改变了cutView的margin后，修正了，所以之后的listener中right的坐标不需要减去offset
@@ -134,9 +142,15 @@ class VideoCutLayout : FrameLayout {
                 mCutView.layoutParams = params
                 //如果要将后面露出来，加一个透明的item
                 width -= offset //宽度需要减去露出的部分
+                //第二层加一个半透明的view
+                val layerView = View(context)
+                layerView.setBackgroundColor(Color.parseColor("#80000000"))
+                val layerViewParams = LayoutParams(offset + mCutView.getRightWidth(), LayoutParams.MATCH_PARENT)
+                layerViewParams.gravity = Gravity.END
+                addViewInLayout(layerView, 1, layerViewParams)
                 mMaxDuration
             }
-            val range = mRecyclerView.computeHorizontalScrollRange() - offset
+            val range = mRecyclerView.computeHorizontalScrollRange()
             //因为帧的item宽度为int，所以会损失一些精度，导致两者有几个像素的误差。这里计算的时候把它减出来.
             if (cutRange > range) {
                 val params = mCutView.layoutParams
@@ -160,12 +174,6 @@ class VideoCutLayout : FrameLayout {
         }
     }
 
-
-    override fun onDrawForeground(canvas: Canvas?) {
-        super.onDrawForeground(canvas)
-        //绘制一个半透明的矩形挡住露出来的部分。
-        canvas?.drawRect(mCutView.right.toFloat(), 0f, measuredWidth.toFloat(), measuredHeight.toFloat(), mPaint)
-    }
 
     /**
      * 设置监听
