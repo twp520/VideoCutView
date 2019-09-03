@@ -1,13 +1,20 @@
 package com.colin.videocutview
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
+import android.graphics.RectF
+import android.os.Build
 import android.support.v7.widget.LinearLayoutManager
 import android.support.v7.widget.RecyclerView
 import android.util.AttributeSet
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
+import kotlin.math.max
+import kotlin.math.min
 
 /**
  * create by colin 2019-07-16
@@ -31,6 +38,12 @@ class VideoCutLayout : FrameLayout {
     private var mCutDuration = 0L //剪辑的时长
     private var mListener: OnCutDurationListener? = null
     private var isComplete = false //是否准备完成
+    private val mLine: View //显示进度的线
+    private val mLineWidth: Int by lazy { dp2px(context, 6f) }  //进度的线的宽度
+    private var mStartTime: Long = 0L
+    private var mEndTime: Long = 0L
+    private var mLastX = 0f
+    private var mDragListener: OnProgressChangedListener? = null
 
 
     constructor(context: Context) : super(context)
@@ -44,7 +57,8 @@ class VideoCutLayout : FrameLayout {
         mCutView = VideoCutView(context)
         mCutView.isEnabled = false
         mCutView.minDuration = 3000f
-
+        mLine = View(context)
+        mLine.setBackgroundResource(R.drawable.shape_video_cut_progress_line)
     }
 
     override fun onFinishInflate() {
@@ -54,10 +68,15 @@ class VideoCutLayout : FrameLayout {
 //        mRecyclerView.setPadding(mCutView.getLeftWidth(), 0, mCutView.getRightWidth(), 0)
         params1.leftMargin = mCutView.getLeftWidth()
         params1.rightMargin = mCutView.getRightWidth()
+        val topBottomMargin = dp2px(context, 3f)
+        params1.topMargin = topBottomMargin
+        params1.bottomMargin = topBottomMargin
         mRecyclerView.setBackgroundColor(Color.TRANSPARENT)
         addView(mRecyclerView, params1)
 
         val params2 = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+        params2.topMargin = topBottomMargin
+        params2.bottomMargin = topBottomMargin
         addView(mCutView, params2)
     }
 
@@ -67,26 +86,41 @@ class VideoCutLayout : FrameLayout {
      */
     fun setFrameAdapter(adapter: RecyclerView.Adapter<*>) {
         mRecyclerView.adapter = adapter
+        val FRAME_COUNT = 10
         mRecyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
-                if (newState == RecyclerView.SCROLL_STATE_IDLE) {
-                    computeDuration(mCutView.getStart(), mCutView.getEnd())
+                if (newState == RecyclerView.SCROLL_STATE_IDLE && adapter.itemCount != FRAME_COUNT) {
+                    computeDuration(
+                        mCutView.getStart(),
+                        mCutView.getEnd(),
+                        STATE_IDLE,
+                        ORIENTATION_LEFT
+                    )
                 }
             }
 
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                if (isComplete) {
+                    computeDuration(
+                        mCutView.getStart(),
+                        mCutView.getEnd(),
+                        STATE_MOVE,
+                        ORIENTATION_LEFT
+                    )
+                }
                 if (childCount > 2) {
                     val lastPos = mLayoutManager.findLastVisibleItemPosition()
-                    getChildAt(1).visibility = if (lastPos >= adapter.itemCount - 1) View.GONE else View.VISIBLE
+                    getChildAt(1).visibility =
+                        if (lastPos >= adapter.itemCount - 1) View.GONE else View.VISIBLE
                 }
             }
-
-
         })
 
         //在滑动的时候，计算当前剪辑的时长
-        mCutView.setOnCutListener { left, right ->
-            computeDuration(left, right)
+        mCutView.setOnCutListener { left, right, state, orientation ->
+            computeDuration(left, right, state, orientation)
+            //拖动的时候，白条要跟着动
+            setLineLeft((if (orientation == ORIENTATION_LEFT) left else right) - mLineWidth / 2f)
         }
     }
 
@@ -94,18 +128,23 @@ class VideoCutLayout : FrameLayout {
     //由于CutView返回的是高亮部部分的坐标，但是maxWidth是减去了指针宽度的。
     //所以真正的偏移量应该用 高亮部分的坐标-指针宽度，由于CutView的宽度和父容器宽度一致，所以这个值其实等于
     //CutView的 leftPadding . 但注意，仅仅是值相同，其中计算的思想是不一样的。
-    private fun computeDuration(left: Float, right: Float) {
+    private fun computeDuration(left: Float, right: Float, state: Int, orientation: Int) {
         val startPx = left - mCutView.getLeftWidth()
         val offset = mRecyclerView.computeHorizontalScrollOffset()
+//        LogUtils.e(NewVideoEditorAct.TAG, "left = $left , right = $right ,leftWidth = ${mCutView.getLeftWidth()} , startPx = $startPx , offset = $offset")
         var startMs = (startPx * mPxDuration + offset * mFramePxDuration).toLong() //起始时间
+//        LogUtils.e(NewVideoEditorAct.TAG, "mPxDuration = $mPxDuration ,mFramePxDuration = $mFramePxDuration ,startMs = $startMs")
         var endMs = (startMs + (right - left) * mPxDuration).toLong()
+//        LogUtils.e(NewVideoEditorAct.TAG, "endMs = $endMs")
         if (endMs > mVideoDuration) {
             startMs -= (endMs - mVideoDuration)
             endMs = mVideoDuration
         }
-        startMs = Math.max(0, startMs)
+        startMs = max(0, startMs)
         mCutDuration = endMs - startMs
-        mListener?.invoke(startMs, endMs)
+        mStartTime = startMs
+        mEndTime = endMs
+        mListener?.invoke(startMs, endMs, state, orientation)
     }
 
 
@@ -145,7 +184,11 @@ class VideoCutLayout : FrameLayout {
                 //第二层加一个半透明的view
                 val layerView = View(context)
                 layerView.setBackgroundColor(Color.parseColor("#80000000"))
-                val layerViewParams = LayoutParams(offset + mCutView.getRightWidth(), LayoutParams.MATCH_PARENT)
+                val layerViewParams =
+                    LayoutParams(offset + mCutView.getRightWidth(), LayoutParams.MATCH_PARENT)
+                val margin = dp2px(context, 3f)
+                layerViewParams.topMargin = margin
+                layerViewParams.bottomMargin = margin
                 layerViewParams.gravity = Gravity.END
                 addViewInLayout(layerView, 1, layerViewParams)
                 mMaxDuration
@@ -166,7 +209,23 @@ class VideoCutLayout : FrameLayout {
             mPxDuration = mCutDuration / width
             mCutView.durationPx = mPxDuration
             mFramePxDuration = mVideoDuration / range.toFloat()
-            computeDuration(mCutView.getStart(), mCutView.getEnd() - diff - offset)
+
+            //增加一根竖线，表示播放进度
+            val params2 = LayoutParams(mLineWidth, LayoutParams.MATCH_PARENT)
+//            params2.leftMargin = (mCutView.getStart() - mLineWidth / 2f).toInt()
+            addViewInLayout(mLine, childCount, params2)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                mLine.elevation = 30f
+                mLine.outlineProvider = ViewOutlineProvider.BOUNDS
+            }
+            mLine.translationX = mCutView.getStart() - mLineWidth / 2f
+
+            computeDuration(
+                mCutView.getStart(),
+                mCutView.getEnd() - diff - offset,
+                STATE_IDLE,
+                ORIENTATION_LEFT
+            )
             isComplete = true
             mCutView.isEnabled = true
             mRecyclerView.isEnabled = true
@@ -174,6 +233,97 @@ class VideoCutLayout : FrameLayout {
         }
     }
 
+
+    /**
+     *  更新播放时间，移动小竖线
+     *
+     *  @param time 当前播放时间
+     */
+    fun updatePlayTime(time: Long) {
+//        if (time < mStartTime)
+//            return
+        if (time < mStartTime)
+            mStartTime = time
+
+        if (!isComplete)
+            return
+        val duration = max(time - mStartTime, 0)
+        val distance = duration / mPxDuration - mLineWidth / 2f
+        setLineLeft(min(mCutView.getStart() + distance, mCutView.getEnd() - mLineWidth / 2f))
+    }
+
+    /**
+     * 根据拖动的距离计算时间
+     */
+    private fun getProgressTime(): Long {
+        //就根据距离start多少来算
+        val distance = mLine.x + mLineWidth / 2f - mCutView.getStart()
+        val time = distance * mPxDuration + mStartTime
+        return time.toLong()
+    }
+
+    private fun setLineLeft(left: Float) {
+        mLine.translationX = left
+    }
+
+    override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+        //如果按下的坐标位于竖线，则拦截此次事件
+        if (ev.action == MotionEvent.ACTION_DOWN) {
+            return if (isContainsDown(ev.x, ev.y)) {
+                true
+            } else {
+                super.onInterceptTouchEvent(ev)
+            }
+        }
+        return super.onInterceptTouchEvent(ev)
+    }
+
+    private fun isContainsDown(x: Float, y: Float): Boolean {
+        //因为线很窄，所以右增加20px
+        val rect =
+            RectF(mLine.x, mLine.top.toFloat(), mLine.x + mLineWidth + 20f, mLine.bottom.toFloat())
+        return rect.contains(x, y)
+    }
+
+    //拖动竖线
+    @SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        var consume = false
+        when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+//                LogUtils.d(NewVideoEditorAct.TAG, "onTouchEvent ACTION_DOWN")
+                mLastX = event.x
+                consume = isContainsDown(event.x, event.y)
+                if (consume) {
+                    mDragListener?.onDragDown(getProgressTime())
+                }
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                val dx = event.x - mLastX
+                val newMargin = mLine.translationX + dx
+                consume = if (newMargin >= mCutView.getStart() && newMargin <= mCutView.getEnd()) {
+                    mLine.translationX = newMargin
+                    mLastX = event.x
+                    mDragListener?.onDragMove(getProgressTime())
+                    true
+                } else {
+                    false
+                }
+            }
+
+            MotionEvent.ACTION_UP -> {
+                mDragListener?.onDragUp(getProgressTime())
+            }
+
+        }
+
+        return consume || super.onTouchEvent(event)
+    }
+
+    fun setOnProgressListener(listener: OnProgressChangedListener) {
+        mDragListener = listener
+    }
 
     /**
      * 设置监听
@@ -189,7 +339,7 @@ class VideoCutLayout : FrameLayout {
     fun setVideoDuration(duration: Long, maxDuration: Long = 15 * 1000) {
         mVideoDuration = duration
         mMaxDuration = maxDuration
-        mCutDuration = Math.min(mMaxDuration, mVideoDuration)
+        mCutDuration = min(mMaxDuration, mVideoDuration)
     }
 
     /**
@@ -197,22 +347,22 @@ class VideoCutLayout : FrameLayout {
      *
      * 若没有找到，则返回-1
      */
-    fun getStartFramePosition(): Int {
-        val child = mRecyclerView.findChildViewUnder(mCutView.getStart(), 0f)
-        child ?: return -1
-        return mRecyclerView.getChildAdapterPosition(child)
-    }
+//    fun getStartFramePosition(): Int {
+//        val child = mRecyclerView.findChildViewUnder(mCutView.getStart(), 0f)
+//        child ?: return -1
+//        return mRecyclerView.getChildAdapterPosition(child)
+//    }
 
     /**
      * 获取裁剪后结束的帧在adapter中的索引
      *
      * 若没有找到，则返回-1
      */
-    fun getEndFramePosition(): Int {
-        val child = mRecyclerView.findChildViewUnder(mCutView.getEnd(), 0f)
-        child ?: return -1
-        return mRecyclerView.getChildAdapterPosition(child)
-    }
+//    fun getEndFramePosition(): Int {
+//        val child = mRecyclerView.findChildViewUnder(mCutView.getEnd(), 0f)
+//        child ?: return -1
+//        return mRecyclerView.getChildAdapterPosition(child)
+//    }
 
     /**
      * 获取指针宽度
@@ -224,5 +374,17 @@ class VideoCutLayout : FrameLayout {
             mCutView.getLeftWidth()
         else
             mCutView.getRightWidth()
+    }
+
+    /**
+     * 拖动进度的回调接口
+     */
+    interface OnProgressChangedListener {
+
+        fun onDragDown(time: Long)
+
+        fun onDragMove(time: Long)
+
+        fun onDragUp(time: Long)
     }
 }

@@ -7,7 +7,8 @@ import android.support.v4.content.ContextCompat
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
-
+import kotlin.math.max
+import kotlin.math.min
 
 /**
  * create by colin 2019-07-16
@@ -18,9 +19,16 @@ import android.view.View
  *
  */
 
-typealias OnCutListener = (left: Float, right: Float) -> Unit
+typealias OnCutListener = (left: Float, right: Float, state: Int, orientation: Int) -> Unit
 
-typealias OnCutDurationListener = (startMs: Long, endMs: Long) -> Unit
+typealias OnCutDurationListener = (startMs: Long, endMs: Long, state: Int, orientation: Int) -> Unit
+
+const val STATE_MOVE = 0x11
+const val STATE_IDLE = 0x12
+
+const val ORIENTATION_LEFT = 0X21
+const val ORIENTATION_RIGHT = 0X22
+
 
 class VideoCutView : View {
 
@@ -34,9 +42,6 @@ class VideoCutView : View {
     private var mRectF = RectF() //选中部分的矩形范围
     private val mPaint = Paint() //画笔
 
-
-    private val leftClick = 0
-    private val rightClick = 1
     private var mLeftBitmap: Bitmap
     private var mRightBitmap: Bitmap
 
@@ -54,12 +59,11 @@ class VideoCutView : View {
         mPaint.strokeWidth = 5f
 
         //todo 处理自定义属性，线的颜色，边界的切图
-        mLeftBitmap = vetor2bitmap(resources, R.drawable.ic_video_control)
-        mRightBitmap = vetor2bitmap(resources, R.drawable.ic_video_control_right)
+        mLeftBitmap = vector2bitmap(resources, R.drawable.ic_video_control)
+        mRightBitmap = vector2bitmap(resources, R.drawable.ic_video_control_right)
         mRectF.left = mLeftPadding + mLeftBitmap.width
 
     }
-
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
@@ -77,7 +81,13 @@ class VideoCutView : View {
         mPaint.style = Paint.Style.FILL
         mPaint.color = Color.parseColor("#80000000")
         canvas.drawRect(getLeftWidth().toFloat(), 0f, mLeftPadding, height.toFloat(), mPaint)
-        canvas.drawRect(mRightPadding, 0f, width.toFloat(), height.toFloat(), mPaint)
+        canvas.drawRect(
+            mRightPadding,
+            0f,
+            width.toFloat() - getRightWidth().toFloat(),
+            height.toFloat(),
+            mPaint
+        )
 
         //先画上下两根线
         mPaint.style = Paint.Style.STROKE
@@ -113,11 +123,11 @@ class VideoCutView : View {
                 mDownX = downX
                 mLastX = downX
                 consumed = if (downX > mLeftPadding && downX < mLeftPadding + mLeftBitmap.width) {
-                    click = leftClick
+                    click = ORIENTATION_LEFT
                     mLastX = downX
                     true
                 } else if (downX > mRightPadding - mRightBitmap.width && downX < mRightPadding) {
-                    click = rightClick
+                    click = ORIENTATION_RIGHT
                     mLastX = downX
                     true
                 } else {
@@ -129,20 +139,22 @@ class VideoCutView : View {
                 val moveX = event.x
                 val dx = moveX - mLastX
                 consumed = when (click) {
-                    leftClick -> {
-                        val newPadding = Math.max(mLeftPadding + dx, 0f)
+                    ORIENTATION_LEFT -> {
+                        val newPadding = max(mLeftPadding + dx, 0f)
                         if (newPadding + mLeftBitmap.width < mRectF.right) {
-                            val curDuration = (mRectF.right - newPadding - mLeftBitmap.width) * durationPx
+                            val curDuration =
+                                (mRectF.right - newPadding - mLeftBitmap.width) * durationPx
                             if (!(curDuration <= minDuration + 1 && dx > 0)) {
                                 mLeftPadding = newPadding
                             }
                         }
                         true
                     }
-                    rightClick -> {
-                        val newPadding = Math.min(mRightPadding + dx, width.toFloat())
+                    ORIENTATION_RIGHT -> {
+                        val newPadding = min(mRightPadding + dx, width.toFloat())
                         if (newPadding - mRightBitmap.width > mRectF.left) {
-                            val curDuration = (newPadding - mRightBitmap.width - mRectF.left) * durationPx
+                            val curDuration =
+                                (newPadding - mRightBitmap.width - mRectF.left) * durationPx
                             if (!(curDuration <= minDuration + 1 && dx < 0)) {
                                 mRightPadding = newPadding
                             }
@@ -154,23 +166,28 @@ class VideoCutView : View {
                         false
                     }
                 }
-                mLastX = moveX
-                mRectF.left = mLeftPadding + mLeftBitmap.width
-                mRectF.right = mRightPadding - mRightBitmap.width
                 if (consumed) {
+                    mLastX = moveX
+                    mRectF.left = mLeftPadding + mLeftBitmap.width
+                    mRectF.right = mRightPadding - mRightBitmap.width
                     invalidate()
-                    mListener?.invoke(mRectF.left, mRectF.right)
+                    mListener?.invoke(mRectF.left, mRectF.right, STATE_MOVE, click)
                 }
             }
 
-            MotionEvent.ACTION_UP -> {
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 //这里不考虑长按等事件，简单处理。 有需要可以再处理。
-                val upX = event.x
-                if (Math.abs(upX - mDownX) < 5) {
-                    performClick()
-                }
+                consumed = true
+//                val upX = event.x
+//                if (abs(upX - mDownX) < 5) {
+//                    performClick()
+//                } else {
+                mListener?.invoke(mRectF.left, mRectF.right, STATE_IDLE, click)
+//                }
                 click = -1
+
             }
+
         }
 
         return consumed
@@ -201,5 +218,4 @@ class VideoCutView : View {
     fun getEnd(): Float {
         return mRectF.right
     }
-
 }

@@ -22,14 +22,22 @@ class MainActivity : AppCompatActivity() {
                 Manifest.permission.READ_EXTERNAL_STORAGE
             ) != PackageManager.PERMISSION_GRANTED
         ) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), 100)
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE),
+                100
+            )
         } else {
             initView()
         }
 
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 100) {
             if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
@@ -42,10 +50,9 @@ class MainActivity : AppCompatActivity() {
         val adapter = TestAdapter(this)
         main_cut.setFrameAdapter(adapter)
         main_cut.setVideoDuration(20000)
-        main_cut.setOnCutDurationListener { startMs, endMs ->
+        main_cut.setOnCutDurationListener { startMs, endMs, state, orientation ->
 
         }
-
         main_btn.setOnClickListener {
 
 
@@ -59,7 +66,8 @@ class MainActivity : AppCompatActivity() {
 
         Toast.makeText(this, stringByNative, Toast.LENGTH_SHORT).show()
 
-        val path = Environment.getExternalStorageDirectory().absolutePath + "/tencent/MicroMsg/WeiXin/1564324950181.mp4"
+        val path =
+            Environment.getExternalStorageDirectory().absolutePath + "/tencent/MicroMsg/WeiXin/1564324950181.mp4"
         creator.openVideoFile(path)
     }
 }
