@@ -30,4 +30,8 @@ class TestAdapter(var context: Context) : RecyclerView.Adapter<TestAdapter.ViewH
     inner class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         val textView: TextView = itemView.findViewById(R.id.item_img)
     }
+
+    fun addData(data: String) {
+        //todo 处理透明item
+    }
 }

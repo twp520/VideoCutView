@@ -8,3 +8,5 @@ Android 视频剪切 View
 拖动条，帧列表，进度条。
 
 增加选封面的View
+
+使用方法：https://juejin.im/post/5d4ff7dd5188253116780f81
